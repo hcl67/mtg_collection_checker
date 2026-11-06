@@ -2,11 +2,12 @@
 
 A Tampermonkey userscript for Magic: The Gathering shoppers. Import your card lists from CSV, then see at a glance, right on the store page, which cards you already own, which are on your shopping list, and which appear in a reference list (staples, a meta deck, a trade binder, and so on). It can also filter a store's card grid down to just the cards you care about.
 
-**Current version: 0.3.2**
+**Current version: 0.4.0**
 
 ## Features
 
 - **Multiple card lists from CSV.** Import as many lists as you like and assign each one a type.
+- **Import straight from an Archidekt collection URL**, and refresh it later with one click.
 - **Three list types with inline badges** next to card names:
 
   | Type | Badge | Colour | Meaning |
@@ -19,7 +20,7 @@ A Tampermonkey userscript for Magic: The Gathering shoppers. Import your card li
 - **Grid filter** on supported stores: show only cards from your Shopping lists and/or Reference lists, and hide everything else. A counter shows how many cards remain visible.
 - **Selection popup on any website.** Select a card name anywhere on the web, and a small popup shows its status in all of your lists (also available with `Ctrl+Shift+M`).
 - **Smart name matching**: case-insensitive, normalises quotes and extra whitespace, understands double-faced cards (`A // B` or `A / B`), and ignores variant suffixes such as `(Showcase)` or `(Extended Art)`.
-- **Everything stays local.** Lists are stored in Tampermonkey storage on your machine. Nothing is uploaded anywhere.
+- **Everything stays local.** Lists are stored in Tampermonkey storage on your machine. Nothing is uploaded anywhere. The only network request the script makes is the Archidekt download you start yourself.
 
 ## Supported stores
 
@@ -48,6 +49,14 @@ The selection popup is not limited to these sites. It works on any page.
 4. If a list with the same name already exists, you will be asked whether to replace it.
 
 Open pages are refreshed right after an import, a type change or a deletion.
+
+### Importing from Archidekt
+
+1. Choose **🔗 Import from Archidekt URL** from the Tampermonkey menu (or the button in Manage Card Lists).
+2. Paste a public collection URL, for example `https://archidekt.com/collection/v2/749265`. A `?collectionGame=` parameter in the URL is respected; otherwise the paper collection is used.
+3. Enter a name and type as with a CSV import.
+
+The script calls the same export endpoint as Archidekt's **Export** button, fetching only quantity and card name. Lists imported this way show a **Refresh** button in Manage Card Lists that re-downloads the collection and keeps the list's name and type.
 
 **Type auto-detection.** The default type is guessed from the list name:
 
@@ -132,6 +141,9 @@ If a container holds several name elements (for example a list row and a tile vi
 - The page structure of each store is read from its HTML, so a store redesign can break its adapter until it is updated.
 
 ## Changelog
+
+### 0.4.0
+- Import a public Archidekt collection directly from its URL, and refresh it later from Manage Card Lists.
 
 ### 0.3.2
 - Variant suffixes like `(Showcase)` on the page no longer prevent a match with the base card.
