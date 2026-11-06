@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MTG Collection Checker
 // @namespace    https://github.com/
-// @version      0.3.2
+// @version      0.4.0
 // @description  MTG collection, shopping list and reference checker.
 // @author       Djinn
 // @match        *://*/*
@@ -9,6 +9,8 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @connect      archidekt.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -1015,6 +1017,108 @@
     // Import
     // ============================================================
 
+    /*
+     * Shared by file and URL imports: ask for name and type, then save.
+     */
+    function finishImport(
+        text,
+        defaultName,
+        sourceName,
+        sourceUrl
+    ) {
+
+        const listName =
+            prompt(
+                'Enter a name for this list:',
+                defaultName
+            );
+
+        if (
+            !listName ||
+            !listName.trim()
+        ) {
+
+            return;
+        }
+
+        const inferred =
+            inferListType(
+                listName
+            );
+
+        const type =
+            prompt(
+                'List type:\n\n' +
+                'collection = cards you own\n' +
+                'shopping = cards you want\n' +
+                'reference = reference/staples/meta\n\n' +
+                `Default: ${inferred}`,
+                inferred
+            );
+
+        let finalType =
+            String(type || inferred)
+                .trim()
+                .toLowerCase();
+
+        if (
+            ![
+                'collection',
+                'shopping',
+                'reference'
+            ].includes(finalType)
+        ) {
+
+            finalType =
+                inferred;
+        }
+
+        const list =
+            buildListFromCSV(
+                text,
+                listName.trim(),
+                sourceName,
+                finalType
+            );
+
+        if (sourceUrl) {
+
+            list.sourceUrl =
+                sourceUrl;
+        }
+
+        const lists =
+            getLists();
+
+        if (
+            lists[list.name]
+        ) {
+
+            const replace =
+                confirm(
+                    `"${list.name}" already exists.\n\n` +
+                    'Replace it?'
+                );
+
+            if (!replace) {
+                return;
+            }
+        }
+
+        lists[list.name] =
+            list;
+
+        saveLists(lists);
+
+        showToast(
+            `✓ Imported "${list.name}" · ` +
+            `${list.uniqueCards} cards`,
+            4000
+        );
+
+        if (isSupportedShop()) { rescanAll(); }
+    }
+
     function importList() {
 
         const input =
@@ -1078,100 +1182,14 @@
                         return;
                     }
 
-                    const defaultName =
+                    finishImport(
+                        text,
                         file.name.replace(
                             /\.csv$/i,
                             ''
-                        );
-
-                    const listName =
-                        prompt(
-                            'Enter a name for this list:',
-                            defaultName
-                        );
-
-                    if (
-                        !listName ||
-                        !listName.trim()
-                    ) {
-
-                        return;
-                    }
-
-                    const inferred =
-                        inferListType(
-                            listName
-                        );
-
-                    const type =
-                        prompt(
-                            'List type:\n\n' +
-                            'collection = cards you own\n' +
-                            'shopping = cards you want\n' +
-                            'reference = reference/staples/meta\n\n' +
-                            `Default: ${inferred}`,
-                            inferred
-                        );
-
-                    let finalType =
-                        String(type || inferred)
-                            .trim()
-                            .toLowerCase();
-
-                    if (
-                        ![
-                            'collection',
-                            'shopping',
-                            'reference'
-                        ].includes(finalType)
-                    ) {
-
-                        finalType =
-                            inferred;
-                    }
-
-                    const list =
-                        buildListFromCSV(
-                            text,
-                            listName.trim(),
-                            file.name,
-                            finalType
-                        );
-
-                    const lists =
-                        getLists();
-
-                    if (
-                        lists[list.name]
-                    ) {
-
-                        const replace =
-                            confirm(
-                                `"${list.name}" already exists.\n\n` +
-                                'Replace it?'
-                            );
-
-                        if (!replace) {
-                            return;
-                        }
-                    }
-
-                    lists[list.name] =
-                        list;
-
-                    saveLists(lists);
-
-                    showToast(
-                        `✓ Imported "${list.name}" · ` +
-                        `${list.uniqueCards} cards`,
-                        4000
+                        ),
+                        file.name
                     );
-
-                    /*
-                     * Refresh current Scry page immediately.
-                     */
-
-                    if (isSupportedShop()) { rescanAll(); }
 
                 } catch (error) {
 
@@ -1196,6 +1214,305 @@
         );
 
         input.click();
+    }
+
+    // ============================================================
+    // Archidekt import
+    // ============================================================
+
+    /*
+     * Accepts https://archidekt.com/collection/v2/<id>, optionally with
+     * ?collectionGame=<n> (the site's paper/MTGO/Arena selector).
+     */
+    function parseArchidektUrl(text) {
+
+        let url;
+
+        try {
+            url = new URL(String(text).trim());
+        } catch (error) {
+            return null;
+        }
+
+        if (
+            !/(^|\.)archidekt\.com$/i.test(
+                url.hostname
+            )
+        ) {
+
+            return null;
+        }
+
+        const match =
+            url.pathname.match(
+                /^\/collection\/v2\/([^/]+)/
+            );
+
+        if (!match) {
+            return null;
+        }
+
+        return {
+
+            id: match[1],
+
+            game:
+                Number(
+                    url.searchParams.get(
+                        'collectionGame'
+                    )
+                ) || 1
+
+        };
+    }
+
+    function postJSON(url, body) {
+
+        return new Promise(
+            (resolve, reject) => {
+
+                GM_xmlhttpRequest({
+
+                    method: 'POST',
+
+                    url,
+
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    },
+
+                    data:
+                        JSON.stringify(body),
+
+                    onload: response => {
+
+                        let data = null;
+
+                        try {
+                            data = JSON.parse(
+                                response.responseText
+                            );
+                        } catch (error) {
+                            // Handled below.
+                        }
+
+                        if (
+                            response.status !== 200 ||
+                            !data ||
+                            typeof data.content !== 'string'
+                        ) {
+
+                            reject(
+                                new Error(
+                                    (data && (data.error || data.detail || data.details)) ||
+                                    `Archidekt returned HTTP ${response.status}.`
+                                )
+                            );
+
+                            return;
+                        }
+
+                        resolve(data);
+                    },
+
+                    onerror: () =>
+                        reject(
+                            new Error(
+                                'Network error while contacting Archidekt.'
+                            )
+                        ),
+
+                    ontimeout: () =>
+                        reject(
+                            new Error(
+                                'Archidekt request timed out.'
+                            )
+                        ),
+
+                    timeout: 60000
+
+                });
+            }
+        );
+    }
+
+    /*
+     * Same endpoint the site's own Export button uses. Pages are
+     * plain CSV chunks; only the first one carries the header row.
+     */
+    async function fetchArchidektCSV(collection) {
+
+        let csv = '';
+
+        let page = 1;
+
+        let more = true;
+
+        while (more) {
+
+            const data =
+                await postJSON(
+                    'https://archidekt.com/api/collection/export/v2/' +
+                    `${encodeURIComponent(collection.id)}/`,
+                    {
+                        fields: [
+                            'quantity',
+                            'card__oracleCard__name'
+                        ],
+                        page,
+                        game: collection.game,
+                        pageSize: 2500
+                    }
+                );
+
+            csv += data.content;
+
+            more = data.moreContent;
+
+            page++;
+        }
+
+        return csv;
+    }
+
+    async function importFromArchidekt() {
+
+        const input =
+            prompt(
+                'Archidekt collection URL:\n\n' +
+                'e.g. https://archidekt.com/collection/v2/749265'
+            );
+
+        if (
+            !input ||
+            !input.trim()
+        ) {
+
+            return;
+        }
+
+        const collection =
+            parseArchidektUrl(input);
+
+        if (!collection) {
+
+            alert(
+                'Not an Archidekt collection URL.\n\n' +
+                'Expected: https://archidekt.com/collection/v2/<id>'
+            );
+
+            return;
+        }
+
+        try {
+
+            showToast(
+                'Downloading Archidekt collection…',
+                60000
+            );
+
+            const csv =
+                await fetchArchidektCSV(
+                    collection
+                );
+
+            document.getElementById('mtgcc-toast')?.remove();
+
+            finishImport(
+                csv,
+                `Archidekt collection ${collection.id}`,
+                input.trim(),
+                input.trim()
+            );
+
+        } catch (error) {
+
+            document.getElementById('mtgcc-toast')?.remove();
+
+            console.error(
+                '[MTGCC] Archidekt import failed:',
+                error
+            );
+
+            alert(
+                'Archidekt import failed:\n\n' +
+                error.message
+            );
+        }
+    }
+
+    /*
+     * Re-download a list imported from a URL, keeping its name and type.
+     */
+    async function refreshArchidektList(name) {
+
+        const list =
+            getLists()[name];
+
+        const collection =
+            list &&
+            parseArchidektUrl(
+                list.sourceUrl
+            );
+
+        if (!collection) {
+            return;
+        }
+
+        showToast(
+            `Refreshing "${name}"…`,
+            60000
+        );
+
+        try {
+
+            const csv =
+                await fetchArchidektCSV(
+                    collection
+                );
+
+            const refreshed =
+                buildListFromCSV(
+                    csv,
+                    name,
+                    list.source,
+                    list.type
+                );
+
+            refreshed.sourceUrl =
+                list.sourceUrl;
+
+            const lists =
+                getLists();
+
+            lists[name] =
+                refreshed;
+
+            saveLists(lists);
+
+            showToast(
+                `✓ Refreshed "${name}" · ` +
+                `${refreshed.uniqueCards} cards`,
+                4000
+            );
+
+            if (isSupportedShop()) { rescanAll(); }
+
+        } catch (error) {
+
+            document.getElementById('mtgcc-toast')?.remove();
+
+            console.error(
+                '[MTGCC] Archidekt refresh failed:',
+                error
+            );
+
+            alert(
+                'Archidekt refresh failed:\n\n' +
+                error.message
+            );
+        }
     }
 
     // ============================================================
@@ -3141,6 +3458,35 @@
                     select
                 );
 
+                if (list.sourceUrl) {
+
+                    const refreshButton =
+                        createText(
+                            'button',
+                            'Refresh',
+                            'mtgcc-button'
+                        );
+
+                    refreshButton.addEventListener(
+                        'click',
+                        async () => {
+
+                            refreshButton.disabled =
+                                true;
+
+                            await refreshArchidektList(
+                                name
+                            );
+
+                            renderLists();
+                        }
+                    );
+
+                    controls.appendChild(
+                        refreshButton
+                    );
+                }
+
                 controls.appendChild(
                     deleteButton
                 );
@@ -3176,12 +3522,29 @@
                 'mtgcc-button mtgcc-primary'
             );
 
+        const urlImportButton =
+            createText(
+                'button',
+                '🔗 Import from Archidekt URL',
+                'mtgcc-button mtgcc-primary'
+            );
+
         const closeButton =
             createText(
                 'button',
                 'Close',
                 'mtgcc-button'
             );
+
+        urlImportButton.addEventListener(
+            'click',
+            () => {
+
+                overlay.remove();
+
+                importFromArchidekt();
+            }
+        );
 
         importButton.addEventListener(
             'click',
@@ -3204,6 +3567,10 @@
 
         footer.appendChild(
             importButton
+        );
+
+        footer.appendChild(
+            urlImportButton
         );
 
         footer.appendChild(
@@ -3277,6 +3644,11 @@
     );
 
     GM_registerMenuCommand(
+        '🔗 Import from Archidekt URL',
+        importFromArchidekt
+    );
+
+    GM_registerMenuCommand(
         '📚 Manage Card Lists',
         manageLists
     );
@@ -3336,7 +3708,7 @@
     // ============================================================
 
     console.log(
-        '[MTGCC] MTG Collection Checker v0.3.2 loaded.'
+        '[MTGCC] MTG Collection Checker v0.4.0 loaded.'
     );
 
     if (
